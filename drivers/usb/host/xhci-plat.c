@@ -297,10 +297,11 @@ MODULE_ALIAS("platform:xhci-hcd");
 
 static int __init xhci_plat_init(void)
 {
-	xhci_init_driver(&xhci_plat_hc_driver, &xhci_plat_overrides);
 #ifdef CONFIG_USB_DWC3_HOST_INTEL
+	xhci_init_driver(&xhci_dwc_hc_driver, &xhci_dwc_overrides);
 	return platform_driver_register(&dwc3_xhci_driver);
 #endif
+	xhci_init_driver(&xhci_plat_hc_driver, &xhci_plat_overrides);
 	return platform_driver_register(&usb_xhci_driver);
 }
 module_init(xhci_plat_init);

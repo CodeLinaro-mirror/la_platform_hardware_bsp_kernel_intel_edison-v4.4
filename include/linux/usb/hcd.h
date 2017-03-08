@@ -116,7 +116,7 @@ struct usb_hcd {
 #define HCD_FLAG_DEAD			6	/* controller has died? */
 #define HCD_FLAG_INTF_AUTHORIZED	7	/* authorize interfaces? */
 #define HCD_FLAG_DEV_AUTHORIZED		8	/* authorize devices? */
-#define HCD_FLAG_IRQ_DISABLED		7	/* Interrupt was disabled */
+#define HCD_FLAG_IRQ_DISABLED		9	/* Interrupt was disabled */
 
 
 	/* The flags can be tested using these macros; they are likely to
