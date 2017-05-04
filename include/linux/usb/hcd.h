@@ -116,6 +116,8 @@ struct usb_hcd {
 #define HCD_FLAG_DEAD			6	/* controller has died? */
 #define HCD_FLAG_INTF_AUTHORIZED	7	/* authorize interfaces? */
 #define HCD_FLAG_DEV_AUTHORIZED		8	/* authorize devices? */
+#define HCD_FLAG_IRQ_DISABLED		9	/* Interrupt was disabled */
+
 
 	/* The flags can be tested using these macros; they are likely to
 	 * be slightly faster than test_bit().
@@ -126,6 +128,7 @@ struct usb_hcd {
 #define HCD_WAKEUP_PENDING(hcd)	((hcd)->flags & (1U << HCD_FLAG_WAKEUP_PENDING))
 #define HCD_RH_RUNNING(hcd)	((hcd)->flags & (1U << HCD_FLAG_RH_RUNNING))
 #define HCD_DEAD(hcd)		((hcd)->flags & (1U << HCD_FLAG_DEAD))
+#define HCD_IRQ_DISABLED(hcd)	((hcd)->flags & (1U << HCD_FLAG_IRQ_DISABLED))
 
 	/*
 	 * Specifies if interfaces are authorized by default
@@ -154,6 +157,8 @@ struct usb_hcd {
 	unsigned		uses_new_polling:1;
 	unsigned		wireless:1;	/* Wireless USB HCD */
 	unsigned		has_tt:1;	/* Integrated TT in root hub */
+	unsigned		has_wakeup_irq:1; /* Can IRQ when suspended */
+
 	unsigned		amd_resume_bug:1; /* AMD remote wakeup quirk */
 	unsigned		can_do_streams:1; /* HC supports streams */
 	unsigned		tpl_support:1; /* OTG & EH TPL support */

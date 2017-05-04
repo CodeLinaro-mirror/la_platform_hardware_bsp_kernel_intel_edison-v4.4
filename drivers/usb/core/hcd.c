@@ -1078,7 +1078,7 @@ static int register_root_hub(struct usb_hcd *hcd)
 		retval = usb_get_bos_descriptor(usb_dev);
 		if (!retval) {
 			usb_dev->lpm_capable = usb_device_supports_lpm(usb_dev);
-		} else if (usb_dev->speed == USB_SPEED_SUPER) {
+		} else if (usb_dev->speed >= USB_SPEED_SUPER) {
 			mutex_unlock(&usb_bus_list_lock);
 			dev_dbg(parent_dev, "can't read %s bos descriptor %d\n",
 					dev_name(&usb_dev->dev), retval);
@@ -2112,7 +2112,7 @@ int usb_alloc_streams(struct usb_interface *interface,
 	hcd = bus_to_hcd(dev->bus);
 	if (!hcd->driver->alloc_streams || !hcd->driver->free_streams)
 		return -EINVAL;
-	if (dev->speed != USB_SPEED_SUPER)
+	if (dev->speed < USB_SPEED_SUPER)
 		return -EINVAL;
 	if (dev->state < USB_STATE_CONFIGURED)
 		return -ENODEV;
@@ -2160,7 +2160,7 @@ int usb_free_streams(struct usb_interface *interface,
 
 	dev = interface_to_usbdev(interface);
 	hcd = bus_to_hcd(dev->bus);
-	if (dev->speed != USB_SPEED_SUPER)
+	if (dev->speed < USB_SPEED_SUPER)
 		return -EINVAL;
 
 	/* Double-free is not allowed */
@@ -2319,6 +2319,11 @@ static void hcd_resume_work(struct work_struct *work)
 	struct usb_device *udev = hcd->self.root_hub;
 
 	usb_remote_wakeup(udev);
+	if (HCD_IRQ_DISABLED(hcd)) {
+	/* We can now process IRQs so enable IRQ */
+		clear_bit(HCD_FLAG_IRQ_DISABLED, &hcd->flags);
+		enable_irq(hcd->irq);
+	}
 }
 
 /**
@@ -2403,9 +2408,23 @@ irqreturn_t usb_hcd_irq (int irq, void *__hcd)
 	struct usb_hcd		*hcd = __hcd;
 	irqreturn_t		rc;
 
-	if (unlikely(HCD_DEAD(hcd) || !HCD_HW_ACCESSIBLE(hcd)))
+	if (unlikely(HCD_DEAD(hcd)))
 		rc = IRQ_NONE;
-	else if (hcd->driver->irq(hcd) == IRQ_NONE)
+	else if (unlikely(!HCD_HW_ACCESSIBLE(hcd))) {
+		if (hcd->has_wakeup_irq) {
+		/*
+		 * We got a wakeup interrupt while the controller was
+		 * suspending or suspended. We can't handle it now, so
+		 * disable the IRQ and resume the root hub (and hence
+		 * the controller too).
+		 */
+			disable_irq_nosync(hcd->irq);
+			set_bit(HCD_FLAG_IRQ_DISABLED, &hcd->flags);
+			usb_hcd_resume_root_hub(hcd);
+			rc = IRQ_HANDLED;
+		} else
+			rc = IRQ_NONE;
+	} else if (hcd->driver->irq(hcd) == IRQ_NONE)	
 		rc = IRQ_NONE;
 	else
 		rc = IRQ_HANDLED;

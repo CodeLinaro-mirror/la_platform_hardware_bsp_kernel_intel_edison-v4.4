@@ -118,6 +118,12 @@ static const struct hc_driver xhci_dwc_hc_driver = {
 	.bus_resume =		xhci_dwc_bus_resume,
 };
 
+/* Adding support for xhci overrides */
+static const struct xhci_driver_overrides xhci_dwc_overrides __initconst = {
+	.extra_priv_size = sizeof(struct xhci_hcd),
+	.reset = xhci_dwc3_setup,
+};
+
 static int if_usb_devices_connected(struct xhci_hcd *xhci)
 {
 	struct usb_device		*usb_dev;
@@ -305,14 +311,11 @@ static int dwc3_start_host(struct usb_hcd *hcd)
 	 * To prevent incorrect flags set during last time. */
 	hcd->flags = 0;
 
-
-	/* Clear the hcd->flags.
-	 * To prevent incorrect flags set during last time. */
-	hcd->flags = 0;
-
 	ret = usb_add_hcd(hcd, otg_irqnum, IRQF_SHARED);
-	if (ret)
+	if (ret) {
+		pr_err("%s: FAILED TO ADD usb hcd!!\n", __func__);
 		return -EINVAL;
+	}
 
 	xhci = hcd_to_xhci(hcd);
 	xhci->shared_hcd = usb_create_shared_hcd(&xhci_dwc_hc_driver,
@@ -322,11 +325,6 @@ static int dwc3_start_host(struct usb_hcd *hcd)
 		goto dealloc_usb2_hcd;
 	}
 	xhci->quirks |= XHCI_PLAT;
-
-	/* Set the xHCI pointer before xhci_pci_setup() (aka hcd_driver.reset)
-	 * is called by usb_add_hcd().
-	 */
-	*((struct xhci_hcd **) xhci->shared_hcd->hcd_priv) = xhci;
 
 	xhci->shared_hcd->regs = hcd->regs;
 
@@ -360,10 +358,6 @@ dealloc_usb2_hcd:
 	usb_hcd_irq(0, hcd);
 	local_irq_enable();
 	usb_remove_hcd(hcd);
-
-	kfree(xhci);
-	*((struct xhci_hcd **) hcd->hcd_priv) = NULL;
-
 	pm_runtime_put(hcd->self.controller);
 	return ret;
 }
@@ -373,6 +367,7 @@ static int dwc3_stop_host(struct usb_hcd *hcd)
 	int count = 0;
 	struct xhci_hcd *xhci;
 	struct usb_hcd *xhci_shared_hcd;
+
 
 	if (!hcd)
 		return -EINVAL;
@@ -401,9 +396,6 @@ static int dwc3_stop_host(struct usb_hcd *hcd)
 	}
 
 	usb_remove_hcd(hcd);
-
-	kfree(xhci);
-	*((struct xhci_hcd **) hcd->hcd_priv) = NULL;
 
 	dwc_xhci_enable_phy_suspend(hcd, false);
 
@@ -474,6 +466,9 @@ static int xhci_dwc_drv_probe(struct platform_device *pdev)
 
 	usb_put_phy(usb_phy);
 
+	/* Enable wakeup irq */
+	hcd->has_wakeup_irq = 1;
+
 	platform_set_drvdata(pdev, hcd);
 	pm_runtime_enable(hcd->self.controller);
 
@@ -533,7 +528,6 @@ static int dwc_hcd_suspend_common(struct device *dev)
 		dev_dbg(dev, "%s: host already stop!\n", __func__);
 		return 0;
 	}
-
 	/* Root hub suspend should have stopped all downstream traffic,
 	 * and all bus master traffic.  And done so for both the interface
 	 * and the stub usb_device (which we check here).  But maybe it
@@ -583,7 +577,7 @@ static int dwc_hcd_suspend_common(struct device *dev)
 			data |= GCTL_GBL_HIBERNATION_EN;
 			writel(data, hcd->regs + GCTL);
 			dev_dbg(hcd->self.controller, "set xhci hibernation enable!\n");
-			retval = xhci_suspend(xhci, device_may_wakeup(dev));
+			retval = xhci_suspend(xhci, 1);
 		}
 
 		/* Check again in case wakeup raced with pci_suspend */
@@ -610,7 +604,7 @@ static int dwc_hcd_resume_common(struct device *dev)
 	struct xhci_hcd		*xhci = hcd_to_xhci(hcd);
 	int			retval = 0;
 
-	if (!xhci)
+	if (!xhci || !xhci->main_hcd)
 		return 0;
 
 	if (HCD_RH_RUNNING(hcd) ||
@@ -641,12 +635,10 @@ static int dwc_hcd_runtime_suspend(struct device *dev)
 	struct platform_device      *pdev = to_platform_device(dev);
 	struct usb_hcd      *hcd = platform_get_drvdata(pdev);
 
-	dwc_xhci_enable_phy_auto_resume(hcd, false);
 	retval = dwc_hcd_suspend_common(dev);
 
 	if (retval)
-		dwc_xhci_enable_phy_auto_resume(
-			hcd, false);
+		dwc_xhci_enable_phy_auto_resume(hcd, false);
 
 	dev_dbg(dev, "hcd_pci_runtime_suspend: %d\n", retval);
 	return retval;
@@ -658,10 +650,8 @@ static int dwc_hcd_runtime_resume(struct device *dev)
 	struct platform_device      *pdev = to_platform_device(dev);
 	struct usb_hcd      *hcd = platform_get_drvdata(pdev);
 
+	dwc_xhci_enable_phy_auto_resume(hcd, false);
 	retval = dwc_hcd_resume_common(dev);
-	if (retval)
-		dwc_xhci_enable_phy_auto_resume(hcd, false);
-
 	dev_dbg(dev, "hcd_pci_runtime_resume: %d\n", retval);
 
 	return retval;
@@ -679,9 +669,10 @@ static int dwc_hcd_suspend(struct device *dev)
 	struct platform_device      *pdev = to_platform_device(dev);
 	struct usb_hcd      *hcd = platform_get_drvdata(pdev);
 
-	dwc_xhci_enable_phy_auto_resume(hcd, false);
-
 	retval = dwc_hcd_suspend_common(dev);
+
+	if (retval)
+		dwc_xhci_enable_phy_auto_resume(hcd, false);
 
 	dev_dbg(dev, "hcd_pci_runtime_suspend: %d\n", retval);
 	return retval;
@@ -690,6 +681,10 @@ static int dwc_hcd_suspend(struct device *dev)
 static int dwc_hcd_resume(struct device *dev)
 {
 	int retval;
+	struct platform_device      *pdev = to_platform_device(dev);
+	struct usb_hcd      *hcd = platform_get_drvdata(pdev);
+
+	dwc_xhci_enable_phy_auto_resume(hcd, false);
 
 	retval = dwc_hcd_resume_common(dev);
 	dev_dbg(dev, "hcd_pci_runtime_resume: %d\n", retval);
