@@ -29,7 +29,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/delay.h>
 #include <asm/intel-mid.h>
-#include <asm/intel_mid_hsu.h>
 
 #ifndef CONFIG_ACPI
 #include <asm/bcm_bt_lpm.h>
@@ -320,8 +319,8 @@ static int bcm_bt_lpm_init(struct platform_device *pdev)
 		return ret;
 	}
 
-	tty_dev = intel_mid_hsu_set_wake_peer(bt_lpm.port,
-			bcm_bt_lpm_wake_peer);
+	tty_dev = &pdev->dev;
+
 	if (!tty_dev) {
 		pr_err("Error no tty dev");
 		gpio_free(bt_lpm.gpio_wake);
